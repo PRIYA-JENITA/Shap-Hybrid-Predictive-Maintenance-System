@@ -1,0 +1,53 @@
+.app-container {
+    background-image: url('/assets/bg.jpg');
+    background-size: cover;
+    min-height: 100vh;
+    padding: 20px;
+    font-family: 'Arial', sans-serif;
+    color: white;
+}
+
+.main-title {
+    text-align: center;
+    color: white;
+    margin-bottom: 30px;
+}
+
+.input-card {
+    background: rgba(0,0,0,0.6);
+    padding: 15px;
+    border-radius: 10px;
+    color: white;
+}
+
+.predict-btn {
+    background-color: #0074D9;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 8px;
+    cursor: pointer;
+}
+
+.predict-btn:hover {
+    background-color: #005fa3;
+}
+
+.tab-content {
+    margin-top: 20px;
+}
+
+.tab-title {
+    margin-bottom: 20px;
+}
+
+.recommendations li {
+    margin-bottom: 10px;
+}
+
+.plot {
+    margin-top: 20px;
+    background-color: rgba(255,255,255,0.1);
+    padding: 10px;
+    border-radius: 10px;
+}

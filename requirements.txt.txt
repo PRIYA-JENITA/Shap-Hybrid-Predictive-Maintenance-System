@@ -1,0 +1,180 @@
+import dash
+from dash import html, dcc, Input, Output, State
+import pandas as pd
+import numpy as np
+import joblib
+import plotly.graph_objects as go
+import shap
+from io import BytesIO
+import base64
+
+# ---------------------------
+# Load model & scaler
+# ---------------------------
+xgb_model = joblib.load("xgb_model_ai4i.joblib")
+scaler = joblib.load("scaler_ai4i.joblib")
+FEATURES = ['Air_temperature', 'Process_temperature', 
+            'Rotational_speed', 'Torque', 'Tool_wear']
+explainer = shap.TreeExplainer(xgb_model)
+
+# ---------------------------
+# Initialize Dash
+# ---------------------------
+app = dash.Dash(__name__, suppress_callback_exceptions=True)
+app.title = "Predictive Maintenance Dashboard"
+
+# ---------------------------
+# Layout
+# ---------------------------
+app.layout = html.Div([
+    html.H1("🧠 Predictive Maintenance Dashboard", style={'textAlign':'center'}),
+
+    # Tabs
+    dcc.Tabs(id="tabs", value='tab1', children=[
+        dcc.Tab(label='Predictive Maintenance', value='tab1'),
+        dcc.Tab(label='Feature Explainability', value='tab2'),
+        dcc.Tab(label='Historical Trends', value='tab3'),
+    ]),
+
+    html.Div(id='tabs-content'),
+
+    # Predefine hidden components to avoid "nonexistent object" errors
+    dcc.Graph(id='risk-gauge', style={'display':'none'}),
+    dcc.Graph(id='shap-bar', style={'display':'none'}),
+    dcc.Graph(id='historical-trends', style={'display':'none'})
+])
+
+# ---------------------------
+# Render Tab Content
+# ---------------------------
+@app.callback(Output('tabs-content', 'children'),
+              Input('tabs', 'value'))
+def render_content(tab):
+    if tab == 'tab1':
+        return html.Div([
+            html.H3("Enter Sensor Values"),
+            html.Div([
+                html.Label('Air Temperature (K)'),
+                dcc.Input(id='air_temp', type='number', value=310),
+                html.Label('Process Temperature (K)'),
+                dcc.Input(id='process_temp', type='number', value=320),
+                html.Label('Rotational Speed (rpm)'),
+                dcc.Input(id='rot_speed', type='number', value=1500),
+                html.Label('Torque (Nm)'),
+                dcc.Input(id='torque', type='number', value=50),
+                html.Label('Tool Wear (min)'),
+                dcc.Input(id='tool_wear', type='number', value=50),
+            ], style={'display':'grid','gridTemplateColumns':'1fr 1fr','gap':'10px'}),
+            html.Button('Predict', id='predict-btn', n_clicks=0),
+            html.Div(id='prediction-output', style={'marginTop':'20px'}),
+            dcc.Graph(id='risk-gauge')
+        ])
+    
+    elif tab == 'tab2':
+        return html.Div([
+            html.H3("SHAP Feature Contributions"),
+            dcc.Graph(id='shap-bar')
+        ])
+    
+    elif tab == 'tab3':
+        return html.Div([
+            html.H3("Upload Historical Sensor Data"),
+            dcc.Upload(
+                id='upload-data',
+                children=html.Div(['Drag and Drop or ', html.A('Select CSV')]),
+                style={
+                    'width': '50%', 'height': '60px', 'lineHeight': '60px',
+                    'borderWidth': '1px', 'borderStyle': 'dashed', 'borderRadius': '5px',
+                    'textAlign': 'center', 'margin': '10px'
+                },
+                multiple=False
+            ),
+            dcc.Graph(id='historical-trends')
+        ])
+
+# ---------------------------
+# Predictive Maintenance Callback
+# ---------------------------
+@app.callback(
+    Output('prediction-output', 'children'),
+    Output('risk-gauge', 'figure'),
+    Output('shap-bar', 'figure'),
+    Input('predict-btn', 'n_clicks'),
+    State('air_temp', 'value'),
+    State('process_temp', 'value'),
+    State('rot_speed', 'value'),
+    State('torque', 'value'),
+    State('tool_wear', 'value')
+)
+def predict_machine(n_clicks, air, process, speed, torque, tool):
+    if n_clicks == 0:
+        return '', go.Figure(), go.Figure()
+    
+    df = pd.DataFrame([[air, process, speed, torque, tool]], columns=FEATURES)
+    df_scaled = scaler.transform(df)
+    
+    # Prediction
+    pred = xgb_model.predict(df_scaled)[0]
+    risk_score = xgb_model.predict_proba(df_scaled)[0][1] * 100
+    
+    # Prediction text
+    if risk_score > 50:
+        pred_text = f"🚨 High Risk: {risk_score:.2f}% → ⚠️ Failure Expected"
+    elif risk_score > 20:
+        pred_text = f"⚠️ Medium Risk: {risk_score:.2f}% → ⚠️ Possible Failure"
+    else:
+        pred_text = f"✅ Low Risk: {risk_score:.2f}% → No Failure Expected"
+    
+    # Risk gauge
+    fig_gauge = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=risk_score,
+        title={'text': "Risk Score"},
+        gauge={'axis': {'range': [0, 100]},
+               'bar': {'color': "red" if risk_score>50 else "green"},
+               'steps': [{'range': [0, 20], 'color': "lightgreen"},
+                         {'range': [20, 50], 'color': "yellow"},
+                         {'range': [50, 100], 'color': "red"}]}
+    ))
+    
+    # SHAP feature contributions
+    shap_values = explainer.shap_values(df_scaled)[0]
+    fig_shap = go.Figure(go.Bar(
+        x=shap_values,
+        y=FEATURES,
+        orientation='h',
+        marker_color='skyblue'
+    ))
+    fig_shap.update_layout(title="Feature Contributions (SHAP)", yaxis={'autorange':'reversed'})
+    
+    return pred_text, fig_gauge, fig_shap
+
+# ---------------------------
+# Historical Trends Callback
+# ---------------------------
+@app.callback(
+    Output('historical-trends', 'figure'),
+    Input('upload-data', 'contents'),
+    State('upload-data', 'filename')
+)
+def update_historical(content, filename):
+    if content is None:
+        return go.Figure()
+    
+    content_type, content_string = content.split(',')
+    decoded = base64.b64decode(content_string)
+    df = pd.read_csv(BytesIO(decoded))
+    df.columns = df.columns.str.strip().str.replace(' ', '_')
+    
+    fig = go.Figure()
+    for feature in FEATURES:
+        if feature in df.columns:
+            fig.add_trace(go.Scatter(y=df[feature], mode='lines', name=feature))
+    fig.update_layout(title="Historical Sensor Trends")
+    return fig
+
+# ---------------------------
+# Run app
+# ---------------------------
+if __name__ == '__main__':
+    app.run(debug=True)
